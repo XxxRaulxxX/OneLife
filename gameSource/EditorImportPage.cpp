@@ -33,10 +33,17 @@ extern EditorObjectPage *objectPage;
 
 
 #include "zoomView.h"
+#include "PNGFileDialog.h"
+#include <stdio.h>
+#include <string.h>
 
 
 // label distance from checkboxes
 static int checkboxSep = 12;
+
+static const int pngCheckerSize = 16;
+static const double minPNGZoom = 0.0625;
+static const double maxPNGZoom = 16;
 
 
 EditorImportPage::EditorImportPage()
@@ -50,7 +57,14 @@ EditorImportPage::EditorImportPage()
           mCurrentLinesImportCacheIndex( 0 ),
           mImportPathOverride( NULL ),
           mXTopLinesButton( smallFont, +280, 240, "X" ),
-          mImportOverlayButton( smallFont, +370, 260, "Overlay Import" ),
+          mImportOverlayButton( smallFont, +370, 280, "Overlay Import" ),
+          mLoadPNGFileButton( smallFont, +370, 240, "Load PNG File" ),
+          mXPNGFileButton( smallFont, +480, 240, "X" ),
+          mDirectPNGImport( false ),
+          mPNGZoom( 1 ),
+          mScanSolid( true ),
+          mScanSaturation( 0.5 ),
+          mScanShadow( 0.5 ),
           mSelect( false ),
           mImportedSheet( NULL ),
           mImportedSheetSprite( NULL ),
@@ -85,8 +99,8 @@ EditorImportPage::EditorImportPage()
           mSaveOverlayButton( smallFont, 310, -260, "Save Overlay" ),
           mInvertButton( smallFont, 210, -320, "Invert" ),
           mInvertColors( false ),
-          mSpritePicker( &spritePickable, -410, 90 ),
-          mOverlayPicker( &overlayPickable, 410, 90 ),
+          mSpritePicker( &spritePickable, -410, 70 ),
+          mOverlayPicker( &overlayPickable, 410, 70 ),
           mSpriteTrimEditorButton( mainFont, -460, 260, "Trim" ),
           mObjectEditorButton( mainFont, 0, 260, "Objects" ),
           mCenterMarkSprite( loadSprite( "centerMark.tga" ) ),
@@ -144,6 +158,8 @@ EditorImportPage::EditorImportPage()
 
     addComponent( &mXTopLinesButton );
     addComponent( &mImportOverlayButton );
+    addComponent( &mLoadPNGFileButton );
+    addComponent( &mXPNGFileButton );
     addComponent( &mSpriteTagField );
     addComponent( &mSaveSpriteButton );
     addComponent( &mSaveOverlayButton );
@@ -177,6 +193,9 @@ EditorImportPage::EditorImportPage()
     mXTopLinesButton.setVisible( false );
     
     mImportOverlayButton.addActionListener( this );
+    mLoadPNGFileButton.addActionListener( this );
+    mXPNGFileButton.addActionListener( this );
+    mXPNGFileButton.setVisible( false );
     
     mSaveSpriteButton.addActionListener( this );
     mSaveOverlayButton.addActionListener( this );
@@ -338,7 +357,294 @@ static void addShadow( Image *inImage, Image *inShadow, double inWeight ) {
 
 
 
+void EditorImportPage::setDirectPNGMode( char inDirect ) {
+    if( inDirect == mDirectPNGImport ) {
+        return;
+        }
+
+    if( inDirect ) {
+        mScanSolid = mSolidCheckbox.getToggled();
+        mScanSaturation = mSaturationSlider.getValue();
+        mScanShadow = mShadowSlider.getValue();
+        }
+    mDirectPNGImport = inDirect;
+    mPNGZoom = 1;
+    mXPNGFileButton.setVisible( inDirect );
+
+    mBlackLineThresholdSlider.setActive( ! inDirect );
+    mPaperThresholdSlider.setActive( ! inDirect );
+    mBlackLineThresholdDefaultButton.setActive( ! inDirect );
+    mPaperThresholdDefaultButton.setActive( ! inDirect );
+    mSolidCheckbox.setActive( ! inDirect );
+
+    if( inDirect ) {
+        // Direct PNGs always use normal alpha blending, not multiply blending.
+        mSolidCheckbox.setToggled( true );
+        mSelectionMultiplicative = false;
+        mSaturationSlider.setValue( 0 );
+        mShadowSlider.setValue( 0 );
+        }
+    else {
+        mSolidCheckbox.setToggled( mScanSolid );
+        mSelectionMultiplicative = ! mScanSolid;
+        mSaturationSlider.setValue( mScanSaturation );
+        mShadowSlider.setValue( mScanShadow );
+        }
+    mShadowSlider.setVisible( inDirect || mScanSolid );
+    mBlackLineThresholdSlider.setVisible( inDirect || mScanSolid );
+    mBlackLineThresholdDefaultButton.setVisible( inDirect || mScanSolid );
+    }
+
+
+void EditorImportPage::clearImportedArtwork() {
+    delete mImportedSheet;
+    mImportedSheet = NULL;
+    delete mWhiteOutSheet;
+    mWhiteOutSheet = NULL;
+    delete mProcessedSelection;
+    mProcessedSelection = NULL;
+    delete mProcessedShadow;
+    mProcessedShadow = NULL;
+    if( mImportedSheetSprite != NULL ) {
+        freeSprite( mImportedSheetSprite );
+        }
+    mImportedSheetSprite = NULL;
+    if( mWhiteOutSheetSprite != NULL ) {
+        freeSprite( mWhiteOutSheetSprite );
+        }
+    mWhiteOutSheetSprite = NULL;
+    if( mProcessedSelectionSprite != NULL ) {
+        freeSprite( mProcessedSelectionSprite );
+        }
+    mProcessedSelectionSprite = NULL;
+    if( mProcessedShadowSprite != NULL ) {
+        freeSprite( mProcessedShadowSprite );
+        }
+    mProcessedShadowSprite = NULL;
+
+    clearLines();
+    mXTopLinesButton.setVisible( false );
+    mCurrentOverlay.deleteAll();
+    mOverlayOffset.deleteAll();
+    mOverlayScale.deleteAll();
+    mOverlayRotation.deleteAll();
+    mOverlayFlip.deleteAll();
+    mClearRotButton.setVisible( false );
+    mClearScaleButton.setVisible( false );
+    mFlipOverlayButton.setVisible( false );
+    mClearOverlayButton.setVisible( false );
+    mInternalPaperPoints.deleteAll();
+    mAnyWhiteOutSet = false;
+    mSelect = false;
+    mWhitingOut = false;
+    mPlacingInternalPaper = false;
+    mSettingSpriteCenter = false;
+    mMovingSheet = false;
+    mMovingOverlay = false;
+    mScalingOverlay = false;
+    mRotatingOverlay = false;
+    mInvertColors = false;
+    mAKeyDown = false;
+    mShowTagMessage = false;
+    mPNGZoom = 1;
+    mSheetW = 0;
+    mSheetH = 0;
+    mSheetOffset.x = 0;
+    mSheetOffset.y = 0;
+    mCenterPoint.x = 0;
+    mCenterPoint.y = 0;
+    mSaveSpriteButton.setVisible( false );
+    mSaveOverlayButton.setVisible( false );
+    mInvertButton.setVisible( false );
+    mSelectStart.x = 0;
+    mSelectStart.y = 0;
+    mSelectEnd = mSelectStart;
+    }
+
+
+void EditorImportPage::clearPNGArtwork() {
+    if( mDirectPNGImport ) {
+        clearImportedArtwork();
+        setDirectPNGMode( false );
+        setStatusDirect( NULL, false );
+        }
+    }
+
+
+static Image *getPNGPreview( Image *inImage, int inWidth, int inHeight ) {
+    Image *preview = inImage->copy();
+    int width = preview->getWidth();
+    int left = ( width - inWidth ) / 2;
+    int top = ( preview->getHeight() - inHeight ) / 2;
+    double *red = preview->getChannel( 0 );
+    double *green = preview->getChannel( 1 );
+    double *blue = preview->getChannel( 2 );
+    double *alpha = preview->getChannel( 3 );
+
+    // Composite the checkerboard for display only, within the PNG canvas.
+    for( int y=0; y<inHeight; y++ ) {
+        for( int x=0; x<inWidth; x++ ) {
+            int i = ( top + y ) * width + left + x;
+            double background = ( ( x / pngCheckerSize + y / pngCheckerSize ) % 2 ) ? 0.75 : 1;
+            double a = alpha[i];
+            red[i] = red[i] * a + background * ( 1 - a );
+            green[i] = green[i] * a + background * ( 1 - a );
+            blue[i] = blue[i] * a + background * ( 1 - a );
+            alpha[i] = 1;
+            }
+        }
+    return preview;
+    }
+
+
+doublePair EditorImportPage::sheetToView( doublePair inPoint ) {
+    if( mDirectPNGImport ) {
+        inPoint.x = mSheetOffset.x +
+            ( inPoint.x - mSheetOffset.x ) * mPNGZoom;
+        inPoint.y = mSheetOffset.y +
+            ( inPoint.y - mSheetOffset.y ) * mPNGZoom;
+        }
+    return inPoint;
+    }
+
+
+doublePair EditorImportPage::viewToSheet( doublePair inPoint ) {
+    if( mDirectPNGImport ) {
+        inPoint.x = mSheetOffset.x +
+            ( inPoint.x - mSheetOffset.x ) / mPNGZoom;
+        inPoint.y = mSheetOffset.y +
+            ( inPoint.y - mSheetOffset.y ) / mPNGZoom;
+        }
+    return inPoint;
+    }
+
+
+void EditorImportPage::zoomPNG( double inFactor ) {
+    if( ! mDirectPNGImport || mImportedSheet == NULL ||
+        mSelect || mMovingSheet || mSettingSpriteCenter ) {
+        return;
+        }
+    double zoom = mPNGZoom * inFactor;
+    if( zoom < minPNGZoom ) {
+        zoom = minPNGZoom;
+        }
+    if( zoom > maxPNGZoom ) {
+        zoom = maxPNGZoom;
+        }
+    if( zoom == mPNGZoom ) {
+        return;
+        }
+    mPNGZoom = zoom;
+    }
+
+
+void EditorImportPage::moveSheet( doublePair inOffset ) {
+    if( mDirectPNGImport ) {
+        doublePair delta = sub( inOffset, mSheetOffset );
+        if( mSelectEnd.x > mSelectStart.x &&
+            mSelectEnd.y < mSelectStart.y ) {
+            mSelectStart = add( mSelectStart, delta );
+            mSelectEnd = add( mSelectEnd, delta );
+            }
+        }
+    mSheetOffset = inOffset;
+    }
+
+
+void EditorImportPage::loadPNGFile() {
+    char temporary;
+    const char *error;
+    char *path = choosePNGFile( &temporary, &error );
+    if( path == NULL ) {
+        if( error != NULL ) {
+            setStatusDirect( error, true );
+            }
+        return;
+        }
+
+    // The chooser filters extensions; verify file contents and decode as PNG
+    // before changing any editor artwork, controls, or processing mode.
+    unsigned char header[8];
+    const unsigned char pngHeader[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+    FILE *signatureFile = fopen( path, "rb" );
+    char isPNG = false;
+    if( signatureFile != NULL ) {
+        isPNG = fread( header, 1, 8, signatureFile ) == 8 &&
+            memcmp( header, pngHeader, 8 ) == 0;
+        fclose( signatureFile );
+        }
+    Image *decoded = NULL;
+    if( isPNG ) {
+        File inputFile( NULL, path );
+        FileInputStream stream( &inputFile );
+        PNGImageConverter converter;
+        decoded = converter.deformatImage( &stream );
+        }
+    if( temporary ) {
+        remove( path );
+        }
+    delete [] path;
+    if( decoded == NULL ) {
+        setStatusDirect( "Could not load a valid PNG image", true );
+        return;
+        }
+
+    int sourceW = decoded->getWidth();
+    int sourceH = decoded->getHeight();
+    int channels = decoded->getNumChannels();
+    if( sourceW <= 0 || sourceH <= 0 || channels < 1 || channels > 4 ) {
+        delete decoded;
+        setStatusDirect( "Unsupported PNG image", true );
+        return;
+        }
+    // Normalize RGB, RGBA, grayscale, and grayscale-alpha without changing
+    // color values. Non-alpha images remain opaque, including white pixels.
+    Image *rgba = new Image( sourceW, sourceH, 4, false );
+    for( int c=0; c<3; c++ ) {
+        rgba->pasteChannel( decoded->getChannel( channels <= 2 ? 0 : c ), c );
+        }
+    if( channels == 2 || channels == 4 ) {
+        rgba->pasteChannel( decoded->getChannel( channels - 1 ), 3 );
+        }
+    else {
+        double *alpha = rgba->getChannel( 3 );
+        for( int i=0; i<sourceW*sourceH; i++ ) {
+            alpha[i] = 1;
+            }
+        }
+    delete decoded;
+    Image *expanded = expandToPowersOfTwo( rgba );
+    delete rgba;
+
+    clearImportedArtwork();
+    TextField::unfocusAll();
+
+    mImportedSheet = expanded;
+    mSheetW = expanded->getWidth();
+    mSheetH = expanded->getHeight();
+    Image *preview = getPNGPreview( expanded, sourceW, sourceH );
+    mImportedSheetSprite = fillSprite( preview, false );
+    delete preview;
+    mWhiteOutSheet = new Image( mSheetW, mSheetH, 1, true );
+    mWhiteOutSheetSprite = fillWhiteSprite( mWhiteOutSheet );
+    setDirectPNGMode( true );
+    // Repeated direct loads also start with unmodified colors and no shadow.
+    mSaturationSlider.setValue( 0 );
+    mShadowSlider.setValue( 0 );
+
+    setStatusDirect( NULL, false );
+    }
+
+
 void EditorImportPage::actionPerformed( GUIComponent *inTarget ) {
+    if( inTarget == &mXPNGFileButton ) {
+        clearPNGArtwork();
+        return;
+        }
+    if( inTarget == &mLoadPNGFileButton ) {
+        loadPNGFile();
+        return;
+        }
     if( inTarget == &mImportButton ||
         inTarget == &mImportLinesButton ||
         inTarget == &mImportOverlayButton ) {
@@ -445,6 +751,9 @@ void EditorImportPage::actionPerformed( GUIComponent *inTarget ) {
                 Image *image = converter.deformatImage( &stream );
                 
                 if( image != NULL ) {
+
+                    // Only a successful original import leaves direct-PNG mode.
+                    setDirectPNGMode( false );
                     
                     if( inTarget == &mImportButton ||
                         inTarget == &mImportLinesButton ) {
@@ -830,16 +1139,26 @@ void EditorImportPage::actionPerformed( GUIComponent *inTarget ) {
             }
         }
     else if( inTarget == &mBlackLineThresholdSlider ) {
-        processSelection();
+        if( ! mDirectPNGImport ) {
+            processSelection();
+            }
         }
     else if( inTarget == &mBlackLineThresholdDefaultButton ) {
+        if( mDirectPNGImport ) {
+            return;
+            }
         mBlackLineThresholdSlider.setValue( 0.2 );
         processSelection();
         }
     else if( inTarget == &mPaperThresholdSlider ) {
-        processSelection();
+        if( ! mDirectPNGImport ) {
+            processSelection();
+            }
         }
     else if( inTarget == &mPaperThresholdDefaultButton ) {
+        if( mDirectPNGImport ) {
+            return;
+            }
         mPaperThresholdSlider.setValue( 0.88 );
         processSelection();
         }
@@ -1008,6 +1327,9 @@ void EditorImportPage::actionPerformed( GUIComponent *inTarget ) {
         setSignal( "objectEditor" );
         }
     else if( inTarget == &mSolidCheckbox ) {
+        if( mDirectPNGImport ) {
+            return;
+            }
         if( mSolidCheckbox.getToggled() ) {
             mShadowSlider.setVisible( true );
             mBlackLineThresholdSlider.setVisible( true );
@@ -1034,7 +1356,8 @@ void EditorImportPage::drawUnderComponents( doublePair inViewCenter,
     
     if( mImportedSheetSprite != NULL ) {
         setDrawColor( 1, 1, 1, 1 );
-        drawSprite( mImportedSheetSprite, mSheetOffset );
+        drawSprite( mImportedSheetSprite, mSheetOffset,
+                    mDirectPNGImport ? mPNGZoom : 1 );
 
         toggleMultiplicativeBlend( true );
         
@@ -1046,14 +1369,16 @@ void EditorImportPage::drawUnderComponents( doublePair inViewCenter,
         toggleMultiplicativeBlend( false );
         
         setDrawColor( 1, 1, 1, 1 );
-        drawSprite( mWhiteOutSheetSprite, mSheetOffset );
+        drawSprite( mWhiteOutSheetSprite, mSheetOffset,
+                    mDirectPNGImport ? mPNGZoom : 1 );
 
 
         if( mSelect ) {
             setDrawColor( 0, 0, 1, 0.25 );
             
-            drawRect( mSelectStart.x, mSelectStart.y,
-                      mSelectEnd.x, mSelectEnd.y );
+            doublePair start = sheetToView( mSelectStart );
+            doublePair end = sheetToView( mSelectEnd );
+            drawRect( start.x, start.y, end.x, end.y );
             }
         
         // always draw crosshairs
@@ -1195,6 +1520,9 @@ void EditorImportPage::draw( doublePair inViewCenter,
     setDrawColor( 1, 1, 1, 1 );
     doublePair pos = mSolidCheckbox.getPosition();
     pos.x -= checkboxSep;
+    if( mDirectPNGImport ) {
+        setDrawColor( 0.35, 0.35, 0.35, 1 );
+        }
     smallFont->drawString( "Solid", pos, alignRight );
 
 
@@ -1349,6 +1677,11 @@ void EditorImportPage::pointerDown( float inX, float inY ) {
         }
     
 
+    doublePair point = { inX, inY };
+    point = viewToSheet( point );
+    inX = point.x;
+    inY = point.y;
+
     if( inX - mSheetOffset.x > - mSheetW / 2
         &&
         inX - mSheetOffset.x < mSheetW / 2 
@@ -1374,7 +1707,7 @@ void EditorImportPage::pointerDrag( float inX, float inY ) {
     
     if( mMovingSheet ) {
         doublePair pos = { inX, inY };
-        mSheetOffset = sub( pos, mMovingSheetPointerStart );
+        moveSheet( sub( pos, mMovingSheetPointerStart ) );
         }
     
 
@@ -1384,6 +1717,11 @@ void EditorImportPage::pointerDrag( float inX, float inY ) {
         return;
         }
 
+
+    doublePair point = { inX, inY };
+    point = viewToSheet( point );
+    inX = point.x;
+    inY = point.y;
 
     if( mSelect ) {
         if( inX > mSelectStart.x ) {
@@ -1475,6 +1813,17 @@ void EditorImportPage::keyDown( unsigned char inASCII ) {
         }
 
 
+    if( mDirectPNGImport ) {
+        if( inASCII == '+' ) {
+            zoomPNG( 2 );
+            return;
+            }
+        if( inASCII == '-' ) {
+            zoomPNG( 0.5 );
+            return;
+            }
+        }
+
     int offset = 1;
         
     if( isCommandKeyDown() ) {
@@ -1490,16 +1839,24 @@ void EditorImportPage::keyDown( unsigned char inASCII ) {
     
     // check ASCII codes for ctrl-i, -j, -k, etc
     if( inASCII == 'i' || inASCII == 'I' || inASCII == 9 ) {
-        mSheetOffset.y += offset;
+        doublePair pos = mSheetOffset;
+        pos.y += offset;
+        moveSheet( pos );
         }
     else if( inASCII == 'j' || inASCII == 'J' || inASCII == 10 ) {
-        mSheetOffset.x -= offset;
+        doublePair pos = mSheetOffset;
+        pos.x -= offset;
+        moveSheet( pos );
         }
     else if( inASCII == 'k' || inASCII == 'K' || inASCII == 11 ) {
-        mSheetOffset.y -= offset;
+        doublePair pos = mSheetOffset;
+        pos.y -= offset;
+        moveSheet( pos );
         }
     else if( inASCII == 'l' || inASCII == 'L' || inASCII == 12 ) {
-        mSheetOffset.x += offset;
+        doublePair pos = mSheetOffset;
+        pos.x += offset;
+        moveSheet( pos );
         }
     else if( inASCII == 't' ) {
         mMovingOverlay = true;
@@ -1528,10 +1885,10 @@ void EditorImportPage::keyDown( unsigned char inASCII ) {
     else if( inASCII == 'c' ) {
         mSettingSpriteCenter = true;
         }
-    else if( inASCII == 'w' ) {
+    else if( inASCII == 'w' && ! mDirectPNGImport ) {
         mWhitingOut = true;
         }
-    else if( inASCII == 'W' ) {
+    else if( inASCII == 'W' && ! mDirectPNGImport ) {
         mWhitingOut = false;
         
         if( mWhiteOutSheet != NULL ) {
@@ -1543,10 +1900,10 @@ void EditorImportPage::keyDown( unsigned char inASCII ) {
             }
         mAnyWhiteOutSet = false;
         }
-    else if( inASCII == 'p' ) {
+    else if( inASCII == 'p' && ! mDirectPNGImport ) {
         mPlacingInternalPaper = true;
         }
-    else if( inASCII == 'P' ) {
+    else if( inASCII == 'P' && ! mDirectPNGImport ) {
         mPlacingInternalPaper = false;
         
         mInternalPaperPoints.deleteAll();
@@ -1554,8 +1911,10 @@ void EditorImportPage::keyDown( unsigned char inASCII ) {
     else if( inASCII == 'x' ) {
         if( mImportedSheet != NULL ) {
             
-            int startImX = (int)( lastMouseX + mSheetW/2 - mSheetOffset.x );
-            int startImY = (int)( mSheetH/2 - lastMouseY + mSheetOffset.y );
+            doublePair point = { lastMouseX, lastMouseY };
+            point = viewToSheet( point );
+            int startImX = (int)( point.x + mSheetW/2 - mSheetOffset.x );
+            int startImY = (int)( mSheetH/2 - point.y + mSheetOffset.y );
             
             if( startImX >= 0 && startImX < mSheetW &&
                 startImY >= 0 && startImY < mSheetH ) {
@@ -1646,8 +2005,18 @@ void EditorImportPage::specialKeyDown( int inKeyCode ) {
 
 void EditorImportPage::processSelection() {
 
+    if( mImportedSheet == NULL ) {
+        return;
+        }
+    if( mDirectPNGImport &&
+        ( mSelectEnd.x <= mSelectStart.x ||
+          mSelectEnd.y >= mSelectStart.y ) ) {
+        return;
+        }
+
     // surrounding paper area becomes totally transparent above this brightness 
-    double paperThreshold = mPaperThresholdSlider.getValue();;
+    double paperThreshold = mDirectPNGImport ? 1.0 :
+        mPaperThresholdSlider.getValue();
 
     
     if( mProcessedSelection != NULL ) {
@@ -1660,16 +2029,17 @@ void EditorImportPage::processSelection() {
         }
     
     
+    doublePair centerPoint = viewToSheet( mCenterPoint );
     char usingCenter = mCenterSet;
 
     // relative to cut selection
-    int centerX = (int)( mCenterPoint.x - mSelectStart.x );
-    int centerY = (int)( mSelectStart.y - mCenterPoint.y );
+    int centerX = (int)( centerPoint.x - mSelectStart.x );
+    int centerY = (int)( mSelectStart.y - centerPoint.y );
 
-    if( mCenterPoint.x >= mSelectStart.x &&
-        mCenterPoint.x < mSelectEnd.x &&
-        mCenterPoint.y <= mSelectStart.y &&
-        mCenterPoint.y > mSelectEnd.y ) {
+    if( centerPoint.x >= mSelectStart.x &&
+        centerPoint.x < mSelectEnd.x &&
+        centerPoint.y <= mSelectStart.y &&
+        centerPoint.y > mSelectEnd.y ) {
         
         usingCenter = mCenterSet;
         }
@@ -1755,7 +2125,7 @@ void EditorImportPage::processSelection() {
     
     Image *cutWhiteout = NULL;
 
-    if( mAnyWhiteOutSet ) {
+    if( mAnyWhiteOutSet && ! mDirectPNGImport ) {
         
         // apply white-out to sheet
         
@@ -1867,7 +2237,7 @@ void EditorImportPage::processSelection() {
             }
 
         
-        if( mAnyWhiteOutSet ) {
+        if( mAnyWhiteOutSet && ! mDirectPNGImport ) {
             // apply white-out to merged lines
             
             int numPixCut = imW * imH;
@@ -1905,7 +2275,8 @@ void EditorImportPage::processSelection() {
     whiteMap[ 0 ] = 1;
     
     // how dark do all channels have to be before we say it's not white.
-    double threshold = mBlackLineThresholdSlider.getValue();
+    double threshold = mDirectPNGImport ? 0.0 :
+        mBlackLineThresholdSlider.getValue();
 
 
     double *r = cutImage->getChannel( 0 );
@@ -1918,7 +2289,12 @@ void EditorImportPage::processSelection() {
     char done = false;
 
 
-    if( ! mSolidCheckbox.getToggled() ) {
+    if( mDirectPNGImport ) {
+        // Leave RGB and source alpha untouched: no paper search or feathering.
+        done = true;
+        mSelectionMultiplicative = false;
+        }
+    else if( ! mSolidCheckbox.getToggled() ) {
         // don't search for solid areas at all
         done = true;
         memset( whiteMap, 1, numPixels );
@@ -2020,7 +2396,7 @@ void EditorImportPage::processSelection() {
     double *gCopy = cutImage->copyChannel( 1 );
     double *bCopy = cutImage->copyChannel( 2 );    
 
-    if( !mSelectionMultiplicative )
+    if( ! mDirectPNGImport && ! mSelectionMultiplicative )
     for( int i=0; i<numPixels; i++ ) {
         if( whiteMap[i] == 1 ) {
             
@@ -2083,7 +2459,7 @@ void EditorImportPage::processSelection() {
 
     
     
-    if( !mSelectionMultiplicative )
+    if( ! mDirectPNGImport && ! mSelectionMultiplicative )
     for( int i=0; i<numPixels; i++ ) {
         if( whiteMap[i] == 1 ) {
             

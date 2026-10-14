@@ -31,6 +31,9 @@ class ValueSlider : public PageComponent, public ActionListenerList,
         double getValue();
         void setValue( double inValue );
 
+        virtual void setActive( char inActive );
+        virtual char isActive();
+
         void setHighValue( double inHighValue );
         
         double getHighValue();
@@ -82,6 +85,7 @@ class ValueSlider : public PageComponent, public ActionListenerList,
         double mBarStartX, mBarEndX, mBarStartY, mBarEndY;
 
         char mPointerDown;
+        char mActive;
 
         char mForceDecimalDigits;
         int mDecimalDigits;

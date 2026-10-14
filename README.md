@@ -1,5 +1,8 @@
 # Two Hours One Life
 
+This testing branch adds PNG artwork importing to the editor. See the
+[community build and testing guide](documentation/EditorPNGImport.md).
+
 ![](https://opencollective.com/twohoursonelife/tiers/badge.svg)
 
 ---

@@ -26,6 +26,7 @@ serialWebRequests.cpp \
 message.cpp \
 accountHmac.cpp \
 EditorImportPage.cpp \
+PNGFileDialog.cpp \
 spriteBank.cpp \
 Picker.cpp \
 objectBank.cpp \

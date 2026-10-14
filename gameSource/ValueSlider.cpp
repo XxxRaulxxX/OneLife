@@ -28,6 +28,7 @@ ValueSlider::ValueSlider( Font *inDisplayFont,
           mValue( inLowValue ),
           mBarBorder( inBorder ),
           mPointerDown( false ),
+          mActive( true ),
           mForceDecimalDigits( false ),
           mDecimalDigits( 0 ) {
 
@@ -126,10 +127,28 @@ void ValueSlider::toggleField( char inFieldVisible ) {
     }
 
 
+void ValueSlider::setActive( char inActive ) {
+    mActive = inActive;
+    mPointerDown = false;
+    if( ! inActive ) {
+        mValueField.unfocus();
+        }
+    mValueField.setActive( inActive );
+    }
+
+
+char ValueSlider::isActive() {
+    return mActive;
+    }
+
+
 
 
 
 void ValueSlider::actionPerformed( GUIComponent *inTarget ) {
+    if( ! mActive ) {
+        return;
+        }
     if( inTarget == &mValueField ) {
         double value = (double)( mValueField.getFloat() );
         
@@ -156,6 +175,11 @@ void ValueSlider::actionPerformed( GUIComponent *inTarget ) {
 
 
 void ValueSlider::draw() {
+
+    float oldFade = getDrawFade();
+    if( ! mActive ) {
+        setDrawFade( oldFade * 0.35 );
+        }
     
     setDrawColor( 1, 1, 1, 1 );
     
@@ -175,6 +199,8 @@ void ValueSlider::draw() {
     
     drawRect( mBarStartX + mBarBorder, mBarStartY + mBarBorder, 
               mBarStartX + mBarBorder + fillWidth, mBarEndY - mBarBorder );
+
+    setDrawFade( oldFade );
     
     }
 
@@ -192,6 +218,9 @@ char ValueSlider::isInBar( float inX, float inY ) {
 
 
 void ValueSlider::pointerDown( float inX, float inY ) {
+    if( ! mActive ) {
+        return;
+        }
     
     int mouseButton = getLastMouseButton();
     if ( mouseButton == MouseButton::WHEELUP || mouseButton == MouseButton::WHEELDOWN ) { return; }
@@ -206,7 +235,7 @@ void ValueSlider::pointerDown( float inX, float inY ) {
 
 
 void ValueSlider::pointerDrag( float inX, float inY ) {
-    if( ! mPointerDown ) {
+    if( ! mActive || ! mPointerDown ) {
         return;
         }
     
@@ -232,6 +261,10 @@ void ValueSlider::pointerDrag( float inX, float inY ) {
 
 
 void ValueSlider::pointerUp( float inX, float inY ) {
+    if( ! mActive ) {
+        mPointerDown = false;
+        return;
+        }
     
     int mouseButton = getLastMouseButton();
     if ( mouseButton == MouseButton::WHEELUP || mouseButton == MouseButton::WHEELDOWN ) { return; }

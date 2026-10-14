@@ -63,6 +63,15 @@ class EditorImportPage : public GamePage, public ActionListener {
         
 
         void clearLines();
+
+        void loadPNGFile();
+        void clearPNGArtwork();
+        void clearImportedArtwork();
+        doublePair sheetToView( doublePair inPoint );
+        doublePair viewToSheet( doublePair inPoint );
+        void zoomPNG( double inFactor );
+        void moveSheet( doublePair inOffset );
+        void setDirectPNGMode( char inDirect );
         
 
         TextButton mImportButton;
@@ -82,6 +91,13 @@ class EditorImportPage : public GamePage, public ActionListener {
         
         TextButton mXTopLinesButton;
         TextButton mImportOverlayButton;
+        TextButton mLoadPNGFileButton;
+        TextButton mXPNGFileButton;
+        char mDirectPNGImport;
+        double mPNGZoom;
+        char mScanSolid;
+        double mScanSaturation;
+        double mScanShadow;
 
 
 
